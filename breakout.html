@@ -73,6 +73,19 @@
     }
     @keyframes comboPop { 0%{transform:scale(1)} 40%{transform:scale(1.35)} 100%{transform:scale(1)} }
     .combo-pop { animation:comboPop .22s ease; }
+    /* 아이템 지속 효과 상태바 */
+    #status-bar {
+      display:none; gap:8px; margin-bottom:6px; flex-wrap:wrap; justify-content:center;
+      position:relative; z-index:1;
+    }
+    .stat {
+      font-size:.62rem; letter-spacing:2px; padding:2px 12px; border-radius:20px;
+      border:1.2px solid currentColor;
+      animation:statGlow 1.6s ease-in-out infinite alternate;
+    }
+    .stat.pierce { color:#ffd200; background:rgba(255,210,0,.12); }
+    .stat.wide   { color:#c084fc; background:rgba(192,132,252,.12); }
+    @keyframes statGlow { from{opacity:.7;filter:brightness(.9)} to{opacity:1;filter:brightness(1.45)} }
     /* 모바일 버튼 */
     #mobileCtrl {
       display:none; gap:14px; margin-top:14px;
@@ -208,6 +221,7 @@
   <div class="hud-item"><span class="lbl">BALLS</span><span class="val" id="ballcount">1</span></div>
 </div>
 <div id="combo-hud"><span class="combo-txt" id="combo-txt">COMBO ×1</span></div>
+<div id="status-bar"></div>
 
 <div id="wrap">
   <canvas id="c"></canvas>
@@ -421,6 +435,10 @@ let state = 'idle'; // idle | playing | paused | dead | over | levelclear
 let score=0, level=1, lives=3;
 let paddle, balls, bricks, items, particles;
 
+// ── 지속 효과 (레벨 이어짐, 라이프 잃으면 초기화) ────────────────
+const PERSIST_DEFAULT = { ballR:8, paddleW:110, pierce:0 };
+let persist = { ...PERSIST_DEFAULT };
+
 // ── 레벨별 아이돌 사진 (배경 블러 + 클리어 화면 공유) ────────────
 let currentIdolPhoto = null;
 const bgPhotoEl = document.getElementById('bgPhoto');
@@ -444,13 +462,15 @@ async function loadNewIdolPhoto() {
 }
 
 function initPaddle() {
-  paddle = { w:110, h:14, x:(W-110)/2, y:H-46, speed:7 };
+  const pw = persist.paddleW;
+  paddle = { w:pw, h:14, x:(W-pw)/2, y:H-46, speed:7 };
 }
 
 function spawnStartBall() {
   const spd = 4.4+(level-1)*0.55;
   const a   = -Math.PI/2+(Math.random()-.5)*.6;
-  return { x:paddle.x+paddle.w/2, y:paddle.y-9, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, r:8, attached:true, trail:[] };
+  return { x:paddle.x+paddle.w/2, y:paddle.y-9, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
+           r:persist.ballR, attached:true, trail:[], pierce:persist.pierce };
 }
 
 function freshBricks() {
@@ -463,16 +483,19 @@ function freshBricks() {
 }
 
 function initLevel() {
-  initPaddle();
+  initPaddle();  // persist.paddleW 반영
   balls=[spawnStartBall()]; items=[]; particles=[];
-  freshBricks(); refreshHUD();
-  loadNewIdolPhoto();   // 새 레벨마다 새 아이돌 사진 로드 (배경 + 클리어용)
+  freshBricks(); refreshHUD(); refreshStatus();
+  loadNewIdolPhoto();
 }
 
-function resetBallOnly() {        // ← 실패해도 블럭 유지
+function resetBallOnly() {        // 라이프 감소 → 모든 효과 초기화
+  const hadEffects = persist.pierce > 0 || persist.paddleW > PERSIST_DEFAULT.paddleW;
+  persist = { ...PERSIST_DEFAULT };
   initPaddle();
   balls=[spawnStartBall()]; items=[]; particles=[];
-  refreshHUD();
+  if (hadEffects) flashEffect('✗ EFFECTS LOST', '#ff6b6b');
+  refreshHUD(); refreshStatus();
 }
 
 function refreshHUD() {
@@ -480,6 +503,29 @@ function refreshHUD() {
   levelEl.textContent     = level;
   livesEl.textContent     = '❤'.repeat(lives)+'♡'.repeat(Math.max(0,3-lives));
   ballcountEl.textContent = balls ? balls.length : 1;
+}
+
+function refreshStatus() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  let html = '';
+  if (persist.pierce > 0)
+    html += `<span class="stat pierce">⇒⇒ ×${persist.pierce}</span>`;
+  if (persist.paddleW > PERSIST_DEFAULT.paddleW)
+    html += `<span class="stat wide">⟷+ WIDE</span>`;
+  bar.innerHTML = html;
+  bar.style.display = html ? 'flex' : 'none';
+}
+
+function flashEffect(msg, color='#ff4d6d') {
+  const el = document.createElement('div');
+  el.style.cssText = `position:fixed;top:38%;left:50%;transform:translate(-50%,-50%);`+
+    `font-size:1.05rem;letter-spacing:4px;color:${color};`+
+    `text-shadow:0 0 20px ${color};pointer-events:none;z-index:998;`+
+    `animation:cheatAnim .9s ease forwards;font-family:'Orbitron',monospace;`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 950);
 }
 
 // ── 오버레이 ─────────────────────────────────────────────────────
@@ -638,8 +684,7 @@ btnFire.addEventListener('mousedown', e=>{ e.preventDefault();
   if(state==='playing'){ if(balls.every(b=>b.attached)) balls.forEach(b=>b.attached=false); }
 }, {passive:false});
 // 모바일 패들 이동을 update에 반영
-const _origUpdate=()=>{};  // 패치: keys 대신 _mLeft/_mRight 체크는 update() 내부에서
-// update 패들 로직에 모바일 버튼 통합
+// 모바일 버튼 패들 이동 — 16ms 루프
 const _mPatch=setInterval(()=>{
   if(_mLeft && state==='playing')  paddle.x=Math.max(0,paddle.x-paddle.speed);
   if(_mRight && state==='playing') paddle.x=Math.min(W-paddle.w,paddle.x+paddle.speed);
@@ -655,6 +700,7 @@ photoOverlay.addEventListener('touchend', e => {
 
 function newGame() {
   score=0; level=1; lives=3;
+  persist = { ...PERSIST_DEFAULT };
   resetCombo(); updateHiScore();
   initLevel(); hideOverlay(); state='playing';
 }
@@ -664,8 +710,9 @@ function resumeAfterDeath() {
 
 // ── 아이템 ───────────────────────────────────────────────────────
 const ITEM_DEFS = [
-  { type:'MULTIBALL', icon:'+2', color:'#44ff90' },
-  { type:'BIGBALL',   icon:'◉↑', color:'#ffd200' },
+  { type:'MULTIBALL', icon:'+2',  color:'#44ff90' },
+  { type:'PIERCE',    icon:'⇒⇒', color:'#ffd200' },  // 관통볼: 첫 충돌 블럭 무시하고 통과
+  { type:'WIDE',      icon:'⟷+',  color:'#c084fc' },  // 플레이어 폭 증가
 ];
 
 function trySpawnItem(bx, by) {
@@ -681,15 +728,28 @@ function applyItem(it) {
       if (b.attached) continue;
       for (let i=0;i<2;i++) {
         const a=Math.atan2(b.vy,b.vx)+(i===0?.45:-.45), spd=Math.hypot(b.vx,b.vy);
-        ex.push({ x:b.x, y:b.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, r:b.r, attached:false });
+        // 새 볼도 현재 persist 효과 상속
+        ex.push({ x:b.x, y:b.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
+                  r:persist.ballR, attached:false, trail:[], pierce:persist.pierce });
       }
     }
     balls.push(...ex.slice(0,Math.max(0,8-balls.length)));
-  } else if (it.type==='BIGBALL') {
-    for (const b of balls) b.r=Math.min(b.r+3,20);
+
+  } else if (it.type==='PIERCE') {
+    // 볼 크기 +3 (시각) + 관통 충전 +3 → 레벨 지속
+    const newR=Math.min((persist.ballR)+3,20);
+    persist.ballR=newR;
+    persist.pierce=Math.min(persist.pierce+3,9);
+    for (const b of balls){ b.r=newR; b.pierce=(b.pierce||0)+3; }
+
+  } else if (it.type==='WIDE') {
+    // 플레이어(패들) 폭 +44 → 레벨 지속
+    const newW=Math.min(paddle.w+44,220);
+    paddle.w=newW; paddle.x=Math.min(paddle.x, W-newW);
+    persist.paddleW=newW;
   }
   spawnItemParticles(it.x+it.w/2, it.y+it.h/2, it.color);
-  sfx('item'); refreshHUD();
+  sfx('item'); refreshHUD(); refreshStatus();
 }
 
 // ── 파티클 ───────────────────────────────────────────────────────
@@ -754,15 +814,21 @@ function update(dt) {
         spawnParticles(br.x+br.w/2,br.y+br.h/2,br.pal.main,14);
         trySpawnItem(br.x+br.w/2,br.y+br.h/2);
         sfx('brick');
-        // 레벨내 속도 점진 상승 (매 4번째 벽돌마다 +3%, 최대 1.6× 초기속도)
         const aliveCnt=bricks.filter(x=>x.alive).length;
         if(aliveCnt>0 && (bricks.length-aliveCnt)%4===0){
           const cap=4.4+(level-1)*0.55;
           for(const bb of balls){ const spd2=Math.hypot(bb.vx,bb.vy); if(spd2<cap*1.6){const s=spd2*1.03/spd2;bb.vx*=s;bb.vy*=s;} }
         }
-        if (b.r-Math.abs(dx)<b.r-Math.abs(dy)) b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);
-        else                                    b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);
-        break;
+        if (b.pierce>0) {
+          // ── 관통: 방향 유지하며 통과, 황금 파티클 ──
+          b.pierce--;
+          spawnParticles(br.x+br.w/2,br.y+br.h/2,'#ffd200',10);
+          // break 없음 → 다음 벽돌도 검사
+        } else {
+          if (b.r-Math.abs(dx)<b.r-Math.abs(dy)) b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);
+          else                                    b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);
+          break;
+        }
       }
     }
     // 트레일 기록
@@ -866,12 +932,20 @@ function drawBrick(b) {
 
 function drawPaddle() {
   const {x,y,w,h}=paddle; const dp=5,r=6;
-  ctx.fillStyle='#082840';
+  const isWide=(persist.paddleW>PERSIST_DEFAULT.paddleW);
+  ctx.fillStyle=isWide?'#260840':'#082840';
   ctx.beginPath(); ctx.roundRect(x+dp,y+h,w-dp,dp,[0,0,r,r]); ctx.fill();
   ctx.beginPath(); ctx.roundRect(x+w,y+dp,dp,h-dp,[0,r,r,0]); ctx.fill();
   const g=ctx.createLinearGradient(x,y,x,y+h);
-  g.addColorStop(0,'#ddf4ff'); g.addColorStop(.12,'#88d8f8'); g.addColorStop(.55,'#2288cc'); g.addColorStop(1,'#0d5888');
-  ctx.shadowColor='#5ad8ff88'; ctx.shadowBlur=16;
+  if(isWide){
+    g.addColorStop(0,'#f0ddff'); g.addColorStop(.12,'#cc99f8');
+    g.addColorStop(.55,'#8844cc'); g.addColorStop(1,'#4a1880');
+    ctx.shadowColor='#c084fc99'; ctx.shadowBlur=22;
+  } else {
+    g.addColorStop(0,'#ddf4ff'); g.addColorStop(.12,'#88d8f8');
+    g.addColorStop(.55,'#2288cc'); g.addColorStop(1,'#0d5888');
+    ctx.shadowColor='#5ad8ff88'; ctx.shadowBlur=16;
+  }
   ctx.fillStyle=g; ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill();
   ctx.shadowBlur=0;
   ctx.fillStyle='rgba(255,255,255,.72)';
@@ -879,20 +953,28 @@ function drawPaddle() {
 }
 
 function drawOneBall(b) {
+  const piercing=(b.pierce>0);
   // 트레일
   if(b.trail){
     for(let i=b.trail.length-1;i>=0;i--){
       const t=b.trail[i], a=(1-(i+1)/TRAIL)*0.35;
       ctx.globalAlpha=a;
-      ctx.fillStyle='#6af4ff';
+      ctx.fillStyle=piercing?'#ffd200':'#6af4ff';
       ctx.beginPath(); ctx.arc(t.x,t.y,b.r*(1-(i/TRAIL)*0.5),0,Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha=1;
   }
   const hx=b.x-b.r*.3, hy=b.y-b.r*.3;
-  ctx.shadowColor='rgba(100,210,255,.75)'; ctx.shadowBlur=b.r*2.2;
+  ctx.shadowColor=piercing?'rgba(255,200,0,.9)':'rgba(100,210,255,.75)';
+  ctx.shadowBlur=b.r*2.2;
   const g=ctx.createRadialGradient(hx,hy,b.r*.04,b.x,b.y,b.r);
-  g.addColorStop(0,'#ffffff'); g.addColorStop(.22,'#c2eeff'); g.addColorStop(.6,'#3abcf0'); g.addColorStop(1,'#0b4f75');
+  if(piercing){
+    g.addColorStop(0,'#ffffff'); g.addColorStop(.22,'#fff3aa');
+    g.addColorStop(.6,'#ffaa00'); g.addColorStop(1,'#7a4000');
+  } else {
+    g.addColorStop(0,'#ffffff'); g.addColorStop(.22,'#c2eeff');
+    g.addColorStop(.6,'#3abcf0'); g.addColorStop(1,'#0b4f75');
+  }
   ctx.fillStyle=g; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
   ctx.shadowBlur=0;
   ctx.fillStyle='rgba(255,255,255,.82)';
