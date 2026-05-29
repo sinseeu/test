@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>BREAKOUT 3D</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,7 +57,14 @@
     .hud-item .lbl { display:block; font-size:.62rem; color:#444; letter-spacing:2px; margin-bottom:2px; }
     .hud-item .val { font-size:1.05rem; color:#ddd; font-weight:bold; }
 
-    canvas { display:block; border:1px solid #ffffff12; border-radius:2px; box-shadow:0 0 80px #000a; }
+    canvas { display:block; border:1px solid #ffffff12; border-radius:2px; box-shadow:0 0 80px #000a; max-width:100vw; touch-action:none; }
+    @media (max-width: 720px) {
+      #wrap { width: 100vw; }
+      canvas { width: 100vw !important; height: auto !important; }
+      h1 { font-size: 1.3rem; letter-spacing: 5px; }
+      #hud { gap: 16px; }
+      #tip { font-size: .58rem; padding: 0 8px; text-align: center; }
+    }
     #wrap { position:relative; z-index:1; }
 
     /* ── 게임 오버레이 ── */
@@ -178,7 +186,7 @@
   <div class="photo-bottom"><span class="press-hint">— 아무 키나 누르면 다음 레벨 —</span></div>
 </div>
 
-<div id="tip">← → 패들 이동 &nbsp;·&nbsp; SPACE 발사/정지 &nbsp;·&nbsp; ↑↓ 레벨 스킵</div>
+<div id="tip">PC: ← → 이동 &nbsp;·&nbsp; SPACE 발사/정지 &nbsp;·&nbsp; ↑↓ 스킵 &nbsp;|&nbsp; 모바일: 터치&드래그 이동 &nbsp;·&nbsp; 탭 발사/정지 &nbsp;·&nbsp; 위로 스와이프 스킵</div>
 
 <script>
 // ── Canvas ──────────────────────────────────────────────────────
@@ -452,6 +460,59 @@ document.addEventListener('keydown', e => {
   }
 });
 document.addEventListener('keyup', e => { keys[e.code]=false; });
+
+// ── 터치 컨트롤 (모바일) ──────────────────────────────────────────
+let _touchStartX = 0, _touchStartY = 0, _touchStartTime = 0;
+
+function _canvasX(touch) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  return (touch.clientX - rect.left) * scaleX;
+}
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  _touchStartX = t.clientX; _touchStartY = t.clientY; _touchStartTime = Date.now();
+  if (state === 'playing') paddle.x = Math.max(0, Math.min(W - paddle.w, _canvasX(t) - paddle.w / 2));
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (state !== 'playing') return;
+  const t = e.touches[0];
+  paddle.x = Math.max(0, Math.min(W - paddle.w, _canvasX(t) - paddle.w / 2));
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  const dt = Date.now() - _touchStartTime;
+  const dy = (e.changedTouches[0]?.clientY ?? _touchStartY) - _touchStartY;
+  const tap = dt < 300 && Math.abs(dy) < 20;
+  const swipeUp = dy < -40;
+
+  if (swipeUp && state === 'playing') { triggerLevelClear(); return; }
+
+  if (tap) {
+    if (state === 'idle' || state === 'over')  { newGame(); return; }
+    if (state === 'dead')                       { resumeAfterDeath(); return; }
+    if (state === 'paused')                     { state = 'playing'; hideOverlay(); return; }
+    if (state === 'playing') {
+      const allAttached = balls.every(b => b.attached);
+      if (allAttached) { balls.forEach(b => b.attached = false); }
+      else { state = 'paused'; showOverlay('⏸ PAUSED', '화면을 탭해서 재개', '#6af4ff'); }
+      return;
+    }
+  }
+}, { passive: false });
+
+// 사진 오버레이 터치로 닫기
+photoOverlay.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (state !== 'levelclear') return;
+  photoOverlay.classList.add('hidden');
+  initLevel(); hideOverlay(); state = 'playing';
+}, { passive: false });
 
 function newGame() {
   score=0; level=1; lives=3;
