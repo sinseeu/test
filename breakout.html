@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>BREAKOUT 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -14,7 +16,7 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      font-family: 'Courier New', monospace;
+      font-family: 'Orbitron', 'Courier New', monospace;
       color: #fff;
       user-select: none;
     }
@@ -52,10 +54,42 @@
     }
     @keyframes shimmer { from{background-position:0%} to{background-position:200%} }
 
-    #hud { display:flex; gap:36px; margin-bottom:10px; }
-    .hud-item { text-align:center; min-width:60px; }
-    .hud-item .lbl { display:block; font-size:.62rem; color:#444; letter-spacing:2px; margin-bottom:2px; }
-    .hud-item .val { font-size:1.05rem; color:#ddd; font-weight:bold; }
+    #hud { display:flex; gap:28px; margin-bottom:8px; flex-wrap:wrap; justify-content:center; }
+    .hud-item { text-align:center; min-width:54px; }
+    .hud-item .lbl { display:block; font-size:.55rem; color:#555; letter-spacing:2px; margin-bottom:2px; }
+    .hud-item .val { font-size:.95rem; color:#ddd; font-weight:bold; }
+    #hiscore-val { color:#f7e733; }
+    /* 콤보 HUD */
+    #combo-hud {
+      display:none; align-items:center; gap:6px;
+      margin-bottom:6px; position:relative; z-index:1;
+    }
+    #combo-hud .combo-txt {
+      font-size:.75rem; letter-spacing:3px;
+      background:linear-gradient(90deg,#ff6b6b,#ffd93d,#6bcb77);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+      background-clip:text;
+      filter:drop-shadow(0 0 6px #ffd93d88);
+    }
+    @keyframes comboPop { 0%{transform:scale(1)} 40%{transform:scale(1.35)} 100%{transform:scale(1)} }
+    .combo-pop { animation:comboPop .22s ease; }
+    /* 모바일 버튼 */
+    #mobileCtrl {
+      display:none; gap:14px; margin-top:14px;
+      justify-content:center; align-items:center;
+      position:relative; z-index:1;
+    }
+    @media (hover:none) and (pointer:coarse) { #mobileCtrl { display:flex; } }
+    .ctrl-btn {
+      width:76px; height:56px; border-radius:14px;
+      background:rgba(255,255,255,.07); border:1.5px solid rgba(255,255,255,.18);
+      color:#ccc; font-size:1.2rem; cursor:pointer;
+      display:flex; align-items:center; justify-content:center;
+      user-select:none; -webkit-tap-highlight-color:transparent;
+      transition:background .1s;
+    }
+    .ctrl-btn:active { background:rgba(255,255,255,.18); }
+    #btnFire { width:96px; background:rgba(90,210,255,.1); border-color:rgba(90,210,255,.35); color:#6af4ff; font-size:.75rem; letter-spacing:2px; }
 
     canvas { display:block; border:1px solid #ffffff12; border-radius:2px; box-shadow:0 0 80px #000a; max-width:100vw; touch-action:none; }
     @media (max-width: 720px) {
@@ -168,10 +202,12 @@
 <h1>BREAKOUT 3D</h1>
 <div id="hud">
   <div class="hud-item"><span class="lbl">SCORE</span><span class="val" id="score">0</span></div>
+  <div class="hud-item"><span class="lbl">BEST</span><span class="val" id="hiscore-val">0</span></div>
   <div class="hud-item"><span class="lbl">LEVEL</span><span class="val" id="level">1</span></div>
   <div class="hud-item"><span class="lbl">LIVES</span><span class="val" id="lives">❤❤❤</span></div>
   <div class="hud-item"><span class="lbl">BALLS</span><span class="val" id="ballcount">1</span></div>
 </div>
+<div id="combo-hud"><span class="combo-txt" id="combo-txt">COMBO ×1</span></div>
 
 <div id="wrap">
   <canvas id="c"></canvas>
@@ -186,7 +222,12 @@
   <div class="photo-bottom"><span class="press-hint">— 아무 키나 누르면 다음 레벨 —</span></div>
 </div>
 
-<div id="tip">PC: ← → 이동 &nbsp;·&nbsp; SPACE 발사/정지 &nbsp;·&nbsp; ↑↓ 스킵 &nbsp;|&nbsp; 모바일: 터치&드래그 이동 &nbsp;·&nbsp; 탭 발사/정지 &nbsp;·&nbsp; 위로 스와이프 스킵</div>
+<div id="tip">PC: ← → 이동 · SPACE 발사/정지 · ↑↓ 스킵 &nbsp;|&nbsp; Mobile: 드래그 이동 · 탭 발사 · 스와이프↑ 스킵</div>
+<div id="mobileCtrl">
+  <button class="ctrl-btn" id="btnLeft">◀</button>
+  <button class="ctrl-btn" id="btnFire">● FIRE</button>
+  <button class="ctrl-btn" id="btnRight">▶</button>
+</div>
 
 <script>
 // ── Canvas ──────────────────────────────────────────────────────
@@ -205,6 +246,70 @@ const livesEl     = document.getElementById('lives');
 const ballcountEl = document.getElementById('ballcount');
 const overlay     = document.getElementById('overlay');
 const photoOverlay = document.getElementById('photoOverlay');
+const hiScoreEl   = document.getElementById('hiscore-val');
+const comboHud    = document.getElementById('combo-hud');
+const comboTxtEl  = document.getElementById('combo-txt');
+
+// ── 사운드 (Web Audio API 합성음) ────────────────────────────────
+let _ac=null;
+function _getAC(){
+  if(!_ac) _ac=new(window.AudioContext||window.webkitAudioContext)();
+  if(_ac.state==='suspended') _ac.resume();
+  return _ac;
+}
+function _tone(freq,type,dur,vol=0.22){
+  try{
+    const ac=_getAC(),osc=ac.createOscillator(),g=ac.createGain();
+    osc.connect(g);g.connect(ac.destination);
+    osc.type=type;osc.frequency.value=freq;
+    g.gain.setValueAtTime(vol,ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+dur);
+    osc.start();osc.stop(ac.currentTime+dur);
+  }catch(e){}
+}
+function sfx(n){
+  switch(n){
+    case 'brick':  _tone(520,'square',.07,.18); break;
+    case 'paddle': _tone(230,'sine',.09,.20); break;
+    case 'wall':   _tone(340,'sine',.05,.12); break;
+    case 'item':   _tone(880,'sine',.15,.25); setTimeout(()=>_tone(1100,'sine',.15,.18),80); break;
+    case 'death':  [180,140,105].forEach((f,i)=>setTimeout(()=>_tone(f,'sawtooth',.3,.32),i*170)); break;
+    case 'clear':  [523,659,784,1047].forEach((f,i)=>setTimeout(()=>_tone(f,'sine',.2,.28),i*85)); break;
+    case 'over':   [300,240,180,120].forEach((f,i)=>setTimeout(()=>_tone(f,'sawtooth',.32,.32),i*155)); break;
+  }
+}
+// 첫 인터랙션에서 AudioContext 활성화
+document.addEventListener('keydown', ()=>_getAC(), {once:true});
+document.addEventListener('touchstart', ()=>_getAC(), {once:true});
+
+// ── 하이스코어 ───────────────────────────────────────────────────
+const HI_KEY='bk3d_hi';
+let hiScore=parseInt(localStorage.getItem(HI_KEY)||'0');
+function updateHiScore(){
+  if(score>hiScore){hiScore=score;localStorage.setItem(HI_KEY,String(hiScore));}
+  hiScoreEl.textContent=hiScore;
+}
+
+// ── 콤보 ─────────────────────────────────────────────────────────
+let combo=0;
+function addCombo(){
+  combo++;
+  const mult=Math.ceil(combo/3);
+  if(combo>1){
+    comboHud.style.display='flex';
+    comboTxtEl.textContent=`COMBO ×${mult}`;
+    comboTxtEl.classList.remove('combo-pop');
+    void comboTxtEl.offsetWidth;
+    comboTxtEl.classList.add('combo-pop');
+  }
+}
+function resetCombo(){ combo=0; comboHud.style.display='none'; }
+
+// ── 화면 흔들림 ──────────────────────────────────────────────────
+let shake=0;
+
+// ── 볼 트레일 버퍼 ──────────────────────────────────────────────
+const TRAIL=6;
 
 // ── K-pop 개인 아이돌 — Wikimedia Commons 검색어 ─────────────────
 // Commons는 로고/서명이 아닌 실제 인물 사진이 많음
@@ -345,7 +450,7 @@ function initPaddle() {
 function spawnStartBall() {
   const spd = 4.4+(level-1)*0.55;
   const a   = -Math.PI/2+(Math.random()-.5)*.6;
-  return { x:paddle.x+paddle.w/2, y:paddle.y-9, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, r:8, attached:true };
+  return { x:paddle.x+paddle.w/2, y:paddle.y-9, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, r:8, attached:true, trail:[] };
 }
 
 function freshBricks() {
@@ -506,6 +611,40 @@ canvas.addEventListener('touchend', e => {
   }
 }, { passive: false });
 
+// ── 모바일 버튼 ──────────────────────────────────────────────────
+const btnLeft=document.getElementById('btnLeft');
+const btnRight=document.getElementById('btnRight');
+const btnFire=document.getElementById('btnFire');
+let _mLeft=false,_mRight=false;
+function _mBtnOn(dir){ if(dir==='L')_mLeft=true; else _mRight=true; }
+function _mBtnOff(dir){ if(dir==='L')_mLeft=false; else _mRight=false; }
+['touchstart','mousedown'].forEach(ev=>{
+  btnLeft.addEventListener(ev,  e=>{e.preventDefault();_mBtnOn('L');}, {passive:false});
+  btnRight.addEventListener(ev, e=>{e.preventDefault();_mBtnOn('R');}, {passive:false});
+});
+['touchend','mouseup','touchcancel'].forEach(ev=>{
+  btnLeft.addEventListener(ev,  e=>{e.preventDefault();_mBtnOff('L');}, {passive:false});
+  btnRight.addEventListener(ev, e=>{e.preventDefault();_mBtnOff('R');}, {passive:false});
+});
+btnFire.addEventListener('touchend', e=>{ e.preventDefault();
+  if(state==='idle'||state==='over') { newGame(); return; }
+  if(state==='dead') { resumeAfterDeath(); return; }
+  if(state==='paused') { state='playing'; hideOverlay(); return; }
+  if(state==='playing'){ if(balls.every(b=>b.attached)) balls.forEach(b=>b.attached=false); else{ state='paused';showOverlay('⏸ PAUSED','화면 탭으로 재개','#6af4ff'); } }
+}, {passive:false});
+btnFire.addEventListener('mousedown', e=>{ e.preventDefault();
+  if(state==='idle'||state==='over'){newGame();return;}
+  if(state==='dead'){resumeAfterDeath();return;}
+  if(state==='playing'){ if(balls.every(b=>b.attached)) balls.forEach(b=>b.attached=false); }
+}, {passive:false});
+// 모바일 패들 이동을 update에 반영
+const _origUpdate=()=>{};  // 패치: keys 대신 _mLeft/_mRight 체크는 update() 내부에서
+// update 패들 로직에 모바일 버튼 통합
+const _mPatch=setInterval(()=>{
+  if(_mLeft && state==='playing')  paddle.x=Math.max(0,paddle.x-paddle.speed);
+  if(_mRight && state==='playing') paddle.x=Math.min(W-paddle.w,paddle.x+paddle.speed);
+},16);
+
 // 사진 오버레이 터치로 닫기
 photoOverlay.addEventListener('touchend', e => {
   e.preventDefault();
@@ -516,6 +655,7 @@ photoOverlay.addEventListener('touchend', e => {
 
 function newGame() {
   score=0; level=1; lives=3;
+  resetCombo(); updateHiScore();
   initLevel(); hideOverlay(); state='playing';
 }
 function resumeAfterDeath() {
@@ -549,7 +689,7 @@ function applyItem(it) {
     for (const b of balls) b.r=Math.min(b.r+3,20);
   }
   spawnItemParticles(it.x+it.w/2, it.y+it.h/2, it.color);
-  refreshHUD();
+  sfx('item'); refreshHUD();
 }
 
 // ── 파티클 ───────────────────────────────────────────────────────
@@ -586,9 +726,9 @@ function update(dt) {
   for (const b of balls) {
     if (b.attached) continue;
     b.x+=b.vx*dt; b.y+=b.vy*dt;
-    if (b.x-b.r<0)  { b.x=b.r;     b.vx= Math.abs(b.vx); }
-    if (b.x+b.r>W)  { b.x=W-b.r;   b.vx=-Math.abs(b.vx); }
-    if (b.y-b.r<0)  { b.y=b.r;     b.vy= Math.abs(b.vy); }
+    if (b.x-b.r<0)  { b.x=b.r;     b.vx= Math.abs(b.vx); sfx('wall'); }
+    if (b.x+b.r>W)  { b.x=W-b.r;   b.vx=-Math.abs(b.vx); sfx('wall'); }
+    if (b.y-b.r<0)  { b.y=b.r;     b.vy= Math.abs(b.vy); sfx('wall'); }
 
     const tolY=Math.abs(b.vy)*dt+2;
     if (b.vy>0 && b.x>paddle.x-b.r && b.x<paddle.x+paddle.w+b.r
@@ -597,6 +737,7 @@ function update(dt) {
       const rel=(b.x-(paddle.x+paddle.w/2))/(paddle.w/2);
       const a2=rel*(Math.PI/3), spd=Math.hypot(b.vx,b.vy);
       b.vx=Math.sin(a2)*spd; b.vy=-Math.abs(Math.cos(a2)*spd);
+      sfx('paddle');
     }
 
     for (const br of bricks) {
@@ -605,14 +746,29 @@ function update(dt) {
       const cy2=Math.max(br.y,Math.min(b.y,br.y+br.h));
       const dx=b.x-cx2, dy=b.y-cy2;
       if (dx*dx+dy*dy<b.r*b.r) {
-        br.alive=false; score+=10*level;
+        br.alive=false;
+        addCombo();
+        const mult=Math.max(1,Math.ceil(combo/3));
+        score+=10*level*mult;
+        updateHiScore();
         spawnParticles(br.x+br.w/2,br.y+br.h/2,br.pal.main,14);
         trySpawnItem(br.x+br.w/2,br.y+br.h/2);
+        sfx('brick');
+        // 레벨내 속도 점진 상승 (매 4번째 벽돌마다 +3%, 최대 1.6× 초기속도)
+        const aliveCnt=bricks.filter(x=>x.alive).length;
+        if(aliveCnt>0 && (bricks.length-aliveCnt)%4===0){
+          const cap=4.4+(level-1)*0.55;
+          for(const bb of balls){ const spd2=Math.hypot(bb.vx,bb.vy); if(spd2<cap*1.6){const s=spd2*1.03/spd2;bb.vx*=s;bb.vy*=s;} }
+        }
         if (b.r-Math.abs(dx)<b.r-Math.abs(dy)) b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);
         else                                    b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);
         break;
       }
     }
+    // 트레일 기록
+    if(!b.trail) b.trail=[];
+    b.trail.unshift({x:b.x,y:b.y});
+    if(b.trail.length>TRAIL) b.trail.length=TRAIL;
   }
 
   // 낙구 처리
@@ -621,16 +777,17 @@ function update(dt) {
   if (balls.length!==prev) refreshHUD();
 
   if (balls.length===0) {
-    lives--; refreshHUD();
-    if (lives<=0) { state='over'; showOverlay('GAME OVER',`점수: ${score}\nSPACE 키로 재시작`,'#ff4d6d'); }
-    else          { state='dead'; showOverlay('💥 MISS',`남은 목숨: ${lives}\nSPACE 키로 재개 (블럭 유지)`,'#ff9f1c'); }
+    lives--; refreshHUD(); resetCombo(); updateHiScore(); shake=10;
+    sfx(lives<=0?'over':'death');
+    if (lives<=0) { state='over'; showOverlay('GAME OVER',`SCORE  ${score}\nBEST  ${hiScore}\nSPACE / 탭 재시작`,'#ff4d6d'); }
+    else          { state='dead'; showOverlay('💥 MISS',`남은 목숨: ${lives}\nSPACE / 탭 재개`,'#ff9f1c'); }
     return;
   }
 
   // 레벨 클리어
   if (bricks.every(b=>!b.alive)) {
     level++; state='levelclear'; refreshHUD();
-    showKpopPhoto(); return;
+    resetCombo(); sfx('clear'); showKpopPhoto(); return;
   }
 
   // 아이템
@@ -722,6 +879,16 @@ function drawPaddle() {
 }
 
 function drawOneBall(b) {
+  // 트레일
+  if(b.trail){
+    for(let i=b.trail.length-1;i>=0;i--){
+      const t=b.trail[i], a=(1-(i+1)/TRAIL)*0.35;
+      ctx.globalAlpha=a;
+      ctx.fillStyle='#6af4ff';
+      ctx.beginPath(); ctx.arc(t.x,t.y,b.r*(1-(i/TRAIL)*0.5),0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
   const hx=b.x-b.r*.3, hy=b.y-b.r*.3;
   ctx.shadowColor='rgba(100,210,255,.75)'; ctx.shadowBlur=b.r*2.2;
   const g=ctx.createRadialGradient(hx,hy,b.r*.04,b.x,b.y,b.r);
@@ -760,7 +927,9 @@ let last=0;
 function loop(ts) {
   const dt=Math.min((ts-last)/16.67,3); last=ts;
   if (!bgCache) bgCache=buildBG();
-  ctx.clearRect(0,0,W,H);        // 프레임마다 캔버스 초기화 → 배경사진이 비침
+  ctx.clearRect(0,0,W,H);
+  // 화면 흔들림
+  if(shake>0){ ctx.save(); ctx.translate((Math.random()-.5)*shake*2,(Math.random()-.5)*shake*1.2); shake*=0.75; if(shake<0.4)shake=0; }
   ctx.drawImage(bgCache,0,0);
   ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1;
   ctx.strokeRect(.5,.5,W-1,H-1);
@@ -770,6 +939,7 @@ function loop(ts) {
   drawPaddle();
   for (const b of balls) drawOneBall(b);
   if (state==='playing') update(dt);
+  if(shake>0) ctx.restore();
   requestAnimationFrame(loop);
 }
 
