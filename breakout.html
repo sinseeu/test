@@ -103,7 +103,7 @@
     .ctrl-btn:active { background:rgba(255,255,255,.18); }
     #btnFire { width:96px; background:rgba(90,210,255,.1); border-color:rgba(90,210,255,.35); color:#6af4ff; font-size:.75rem; letter-spacing:2px; }
 
-    canvas { display:block; border:1px solid #ffffff12; border-radius:2px; box-shadow:0 0 80px #000a; max-width:100vw; touch-action:none; }
+    canvas { display:block; border:2px solid rgba(255,255,255,0.65); border-radius:2px; box-shadow:0 0 0 4px rgba(255,255,255,0.08), 0 0 80px #000a; max-width:100vw; touch-action:none; }
     @media (max-width: 720px) {
       #wrap { width: 100vw; }
       canvas { width: 100vw !important; height: auto !important; }
@@ -433,22 +433,50 @@ async function tryFetchOneIdol(q) {
   return null;
 }
 
+// ── 사진 중복 방지 + 사전 로딩 ──────────────────────────────────────
+let _usedPhotoUrls = new Set();   // 이미 쓴 사진 URL 추적
+let _nextPhoto     = null;        // 미리 로딩해둔 다음 사진 URL
+let _nextLoading   = false;       // 프리로드 진행 중 여부
+
 async function fetchKpopImage() {
-  // 최대 3번 다른 아이돌로 시도
+  // 최대 6번 다른 아이돌로 시도하며 이미 쓴 사진은 건너뜀
   const tried = new Set();
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const maxTry = Math.min(6, KPOP_IDOLS.length);
+  for (let attempt = 0; attempt < maxTry; attempt++) {
     let idx;
     do { idx = Math.floor(Math.random() * KPOP_IDOLS.length); } while (tried.has(idx));
     tried.add(idx);
     try {
       const url = await tryFetchOneIdol(KPOP_IDOLS[idx]);
-      if (url) return url;
+      if (url && !_usedPhotoUrls.has(url)) {
+        _usedPhotoUrls.add(url);
+        return url;
+      }
     } catch(e) {
       console.warn('Commons fetch attempt', attempt+1, 'failed:', e);
     }
   }
-  // 모든 시도 실패 → 배경 없음
+  // 모든 URL이 소진됐거나 시도 실패 → 중복 허용하고 재시도
+  if (_usedPhotoUrls.size > 0) {
+    console.log('All photos used — resetting dedup pool');
+    _usedPhotoUrls.clear();
+    return fetchKpopImage();
+  }
   return null;
+}
+
+// 다음 레벨 사진을 백그라운드에서 미리 가져옴
+async function _preloadNext() {
+  if (_nextLoading || _nextPhoto) return;
+  _nextLoading = true;
+  try {
+    const url = await fetchKpopImage();
+    _nextPhoto = url;
+  } catch(e) {
+    console.warn('Preload next photo failed:', e);
+  } finally {
+    _nextLoading = false;
+  }
 }
 
 // ── 팔레트 ──────────────────────────────────────────────────────
@@ -487,8 +515,17 @@ function setBgPhoto(url) {
 
 async function loadNewIdolPhoto() {
   setBgPhoto(null);                         // 이전 사진 지움
-  const url = await fetchKpopImage();       // 그룹사진 없는 개인 Commons 사진
+  let url;
+  if (_nextPhoto) {
+    // 미리 로딩된 사진 즉시 사용
+    url = _nextPhoto;
+    _nextPhoto = null;
+  } else {
+    url = await fetchKpopImage();
+  }
   setBgPhoto(url);
+  // 다음 레벨을 위해 백그라운드에서 미리 로딩
+  _preloadNext();
 }
 
 function initPaddle() {
@@ -824,6 +861,7 @@ function newGame() {
   score=0; level=1; lives=3;
   persist = { ...PERSIST_DEFAULT };
   levelClearPhotos = {};
+  _usedPhotoUrls.clear(); _nextPhoto = null; _nextLoading = false;
   resetCombo(); updateHiScore();
   initLevel(); hideOverlay(); state='playing';
 }
@@ -968,8 +1006,21 @@ function update(dt) {
   if (balls.length===0) {
     lives--; refreshHUD(); resetCombo(); updateHiScore(); shake=10;
     sfx(lives<=0?'over':'death');
-    if (lives<=0) { state='over'; showOverlay('GAME OVER',`SCORE  ${score}\nBEST  ${hiScore}\nSPACE / 탭 재시작`,'#ff4d6d'); }
-    else          { state='dead'; showOverlay('💥 MISS',`남은 목숨: ${lives}\nSPACE / 탭 재개`,'#ff9f1c'); }
+    if (lives<=0) {
+      state='over';
+      showOverlay('GAME OVER',`SCORE  ${score}\nBEST  ${hiScore}\nSPACE / 탭 재시작`,'#ff4d6d');
+      return;
+    }
+    // 라이프 잃어도 게임 멈추지 않고 공만 패들에 재장착
+    const hadEffects = persist.pierce > 0 || persist.paddleW > PERSIST_DEFAULT.paddleW;
+    persist = { ...PERSIST_DEFAULT };
+    initPaddle();
+    balls = [spawnStartBall()];
+    items = []; particles = [];
+    if (hadEffects) flashEffect('✗ EFFECTS LOST', '#ff6b6b');
+    else flashEffect(`💥 MISS  ❤×${lives}`, '#ff9f1c');
+    refreshHUD(); refreshStatus();
+    // state는 'playing' 유지 — 바로 이동하며 SPACE로 발사 가능
     return;
   }
 
