@@ -28,7 +28,7 @@
       width: 116%; height: 116%;   /* inset -8% 보정 */
       z-index: 0;
       object-fit: cover;
-      object-position: center 18%;
+      object-position: center 12%;
       filter: blur(6px) brightness(0.85) saturate(0.85);
       opacity: 0;
       transition: opacity 1.4s ease;
@@ -158,7 +158,7 @@
       position:absolute; inset:0; z-index:1;
       width:100%; height:100%;
       object-fit:cover;
-      object-position:center 18%;
+      object-position:center 14%;
       opacity:0; transition:opacity .55s ease;
     }
     #idolImg.loaded { opacity:1; }
@@ -386,21 +386,32 @@ async function tryFetchOneIdol(q) {
     'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
       action:'query', titles,
       prop:'imageinfo', iiprop:'url|dimensions',
-      iiurlwidth:'900', format:'json', origin:'*',
+      iiurlwidth:'1200', format:'json', origin:'*',
     }), 8000
   );
   if (!ir.ok) return null;
 
   const id2 = await ir.json();
+
+  // 비율 1.2~2.0 (상반신·전신 포트레이트) 최우선 — 극단 클로즈업(>2.5) 하향
+  function portraitScore(info) {
+    const r = (info?.height || 0) / (info?.width || 1);
+    if (r < 0.75) return 0;      // 가로사진 제외
+    if (r < 1.2)  return 0.45;   // 거의 정사각
+    if (r <= 2.0) return 1.0;    // ✅ 이상적: 상반신·전신
+    if (r <= 2.5) return 0.55;   // 약간 클로즈업
+    return 0.15;                  // 극단 클로즈업 — 거의 안 씀
+  }
+
   const pages = Object.values(id2.query.pages)
-    .sort((a, b) => {
-      const ai = a.imageinfo?.[0], bi = b.imageinfo?.[0];
-      return ((bi?.height / (bi?.width||1)) || 0) - ((ai?.height / (ai?.width||1)) || 0);
-    });
+    .sort((a, b) => portraitScore(b.imageinfo?.[0]) - portraitScore(a.imageinfo?.[0]));
 
   for (const page of pages) {
     const info = page.imageinfo?.[0];
-    if (info?.thumburl && info.width >= 300 && info.height >= 300) return info.thumburl;
+    const ratio = (info?.height || 0) / (info?.width || 1);
+    // 최소 크기 + 극단 클로즈업 제외
+    if (info?.thumburl && info.width >= 280 && info.height >= 350 && ratio <= 2.8)
+      return info.thumburl;
   }
   return null;
 }
