@@ -27,8 +27,7 @@
       inset: -8%;                   /* 엣지 번짐 숨기기 */
       width: 116%; height: 116%;   /* inset -8% 보정 */
       z-index: 0;
-      object-fit: cover;
-      object-position: center 22%;
+      object-fit: contain;
       filter: blur(6px) brightness(0.85) saturate(0.85);
       opacity: 0;
       transition: opacity 1.4s ease;
@@ -456,7 +455,8 @@ function brickPalette(row) {
 let state = 'idle'; // idle | playing | paused | dead | over | levelclear | photoreplay
 let score=0, level=1, lives=3;
 let paddle, balls, bricks, items, particles;
-let photoHistory = [];
+let levelClearPhotos = {};
+let replayLvl = 0;
 
 // ── 지속 효과 (레벨 이어짐, 라이프 잃으면 초기화) ────────────────
 const PERSIST_DEFAULT = { ballR:8, paddleW:110, pierce:0 };
@@ -597,21 +597,21 @@ function showKpopPhoto() {
 }
 
 // ── ↓키: 이전 레벨 클리어 보상 사진 다시 보기 ────────────────────
-function showPhotoReplay() {
-  if (!photoHistory.length) return;
-  const entry = photoHistory[photoHistory.length - 1];
+function showPhotoReplay(lvl) {
+  const url = levelClearPhotos[lvl] || null;
+  replayLvl = lvl;
   state = 'photoreplay';
   const imgEl   = document.getElementById('idolImg');
   const spinner = document.getElementById('photoSpinner');
   imgEl.classList.remove('loaded'); imgEl.src = '';
   spinner.classList.remove('done');
   photoOverlay.classList.remove('hidden');
-  document.querySelector('.clear-badge').textContent = `✦ LEVEL ${entry.lvl} CLEAR ✦`;
-  document.querySelector('.press-hint').textContent  = '— 아무 키나 누르면 게임으로 돌아가기 —';
-  if (entry.url) {
+  document.querySelector('.clear-badge').textContent = `✦ LEVEL ${lvl} CLEAR ✦`;
+  document.querySelector('.press-hint').textContent  = '↓ 이전 레벨로 · 다른 키 = 현재 레벨로 복귀';
+  if (url) {
     imgEl.onload  = () => { spinner.classList.add('done'); imgEl.classList.add('loaded'); };
     imgEl.onerror = () => { spinner.classList.add('done'); };
-    imgEl.src = entry.url;
+    imgEl.src = url;
   } else {
     spinner.classList.add('done');
   }
@@ -635,6 +635,23 @@ function _closePhotoReplay() {
   state = 'playing';
 }
 
+function goBackToLevel(n) {
+  photoOverlay.classList.add('hidden');
+  document.querySelector('.clear-badge').textContent = '✦ LEVEL CLEAR ✦';
+  document.querySelector('.press-hint').textContent  = '— 아무 키나 누르면 다음 레벨 —';
+  if (_dismissHandler) { document.removeEventListener('keydown', _dismissHandler); _dismissHandler = null; }
+  level = n;
+  persist = { ...PERSIST_DEFAULT };
+  const bgUrl = levelClearPhotos[n] || null;
+  setBgPhoto(bgUrl); currentIdolPhoto = bgUrl;
+  initPaddle();
+  balls = [spawnStartBall()]; items = []; particles = [];
+  freshBricks();
+  refreshHUD(); refreshStatus();
+  hideOverlay();
+  state = 'playing';
+}
+
 // ── ↑키: 레벨 스킵 ───────────────────────────────────────────────
 function triggerLevelClear() {
   if (state !== 'playing') return;
@@ -644,7 +661,7 @@ function triggerLevelClear() {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 800);
 
-  photoHistory.push({ lvl: level, url: currentIdolPhoto });
+  levelClearPhotos[level] = currentIdolPhoto;
   level++;
   state = 'levelclear';
   refreshHUD();
@@ -657,9 +674,13 @@ document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (['Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
 
-  // ↑ 레벨 스킵 / ↓ 이전 클리어 사진 보기
-  if (e.code==='ArrowUp'   && state==='playing') { triggerLevelClear(); return; }
-  if (e.code==='ArrowDown' && state==='playing') { if (photoHistory.length) showPhotoReplay(); return; }
+  if (e.code==='ArrowUp' && state==='playing') { triggerLevelClear(); return; }
+  if (e.code==='ArrowDown') {
+    if (state==='playing' && level > 1 && levelClearPhotos[level-1] !== undefined)
+      { showPhotoReplay(level-1); return; }
+    if (state==='photoreplay') { goBackToLevel(replayLvl); return; }
+    return;
+  }
 
   if (e.code==='Space') {
     if (state==='levelclear') return;
@@ -703,7 +724,8 @@ canvas.addEventListener('touchend', e => {
 
   const swipeDown = dy > 40;
   if (swipeUp   && state === 'playing') { triggerLevelClear(); return; }
-  if (swipeDown && state === 'playing') { if (photoHistory.length) showPhotoReplay(); return; }
+  if (swipeDown && state === 'playing' && level > 1 && levelClearPhotos[level-1] !== undefined)
+    { showPhotoReplay(level-1); return; }
 
   if (tap) {
     if (state === 'idle' || state === 'over')  { newGame(); return; }
@@ -747,10 +769,19 @@ setInterval(()=>{
   if(_mRight && state==='playing') paddle.x=Math.min(W-paddle.w,paddle.x+paddle.speed);
 },16);
 
-// 사진 오버레이 터치로 닫기
+// 사진 오버레이 터치 — 스와이프↓ 감지
+let _overlayTY = 0;
+photoOverlay.addEventListener('touchstart', e => { _overlayTY = e.touches[0]?.clientY ?? 0; }, { passive:true });
 photoOverlay.addEventListener('touchend', e => {
   e.preventDefault();
-  if (state === 'photoreplay') { _closePhotoReplay(); return; }
+  const dy = (e.changedTouches[0]?.clientY ?? _overlayTY) - _overlayTY;
+  const swipeDown = dy > 40;
+
+  if (state === 'photoreplay') {
+    if (swipeDown) goBackToLevel(replayLvl);
+    else _closePhotoReplay();
+    return;
+  }
   if (state !== 'levelclear') return;
   photoOverlay.classList.add('hidden');
   initLevel(); hideOverlay(); state = 'playing';
@@ -759,7 +790,7 @@ photoOverlay.addEventListener('touchend', e => {
 function newGame() {
   score=0; level=1; lives=3;
   persist = { ...PERSIST_DEFAULT };
-  photoHistory = [];
+  levelClearPhotos = {};
   resetCombo(); updateHiScore();
   initLevel(); hideOverlay(); state='playing';
 }
@@ -910,7 +941,7 @@ function update(dt) {
 
   // 레벨 클리어
   if (bricks.every(b=>!b.alive)) {
-    photoHistory.push({ lvl: level, url: currentIdolPhoto });
+    levelClearPhotos[level] = currentIdolPhoto;
     level++; state='levelclear'; refreshHUD();
     resetCombo(); sfx('clear'); showKpopPhoto(); return;
   }
