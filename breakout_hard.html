@@ -28,7 +28,7 @@
       width: 116%; height: 116%;   /* inset -8% 보정 */
       z-index: 0;
       object-fit: cover;
-      object-position: center 12%;
+      object-position: center 22%;
       filter: blur(6px) brightness(0.85) saturate(0.85);
       opacity: 0;
       transition: opacity 1.4s ease;
@@ -156,7 +156,7 @@
       position:absolute; inset:0; z-index:1;
       width:100%; height:100%;
       object-fit:cover;
-      object-position:center 14%;
+      object-position:center 18%;
       opacity:0; transition:opacity .55s ease;
     }
     #idolImg.loaded { opacity:1; }
@@ -322,6 +322,14 @@ let shake=0;
 // ── 볼 트레일 버퍼 ──────────────────────────────────────────────
 const TRAIL=6;
 
+// ── 기기 해상도 기반 이미지 품질 하한선 ─────────────────────────
+const _dpr        = Math.min(window.devicePixelRatio || 1, 3);
+const _screenLong = Math.max(screen.width  || 1080, screen.height || 1920);
+const _screenShrt = Math.min(screen.width  || 1080, screen.height || 1920);
+const MIN_IMG_LONG = Math.round(_screenLong * _dpr * 0.40);
+const MIN_IMG_SHRT = Math.round(_screenShrt * _dpr * 0.30);
+const IMG_THUMB_W  = String(Math.min(2000, Math.max(1200, Math.round(screen.width * _dpr))));
+
 // ── K-pop 개인 아이돌 — Wikimedia Commons 검색어 ─────────────────
 // Commons는 로고/서명이 아닌 실제 인물 사진이 많음
 const KPOP_IDOLS = [
@@ -367,7 +375,7 @@ async function tryFetchOneIdol(q) {
   const sr = await fetchTimeout(
     'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
       action:'query', list:'search',
-      srsearch: q, srnamespace:'6', srlimit:'20',
+      srsearch: q, srnamespace:'6', srlimit:'24',
       format:'json', origin:'*',
     }), 8000
   );
@@ -378,26 +386,29 @@ async function tryFetchOneIdol(q) {
     .filter(f => /\.(jpg|jpeg|png)$/i.test(f.title) && !NON_PHOTO.test(f.title));
   if (!files.length) return null;
 
-  const titles = files.slice(0, 8).map(f => f.title).join('|');
+  const titles = files.slice(0, 14).map(f => f.title).join('|');
   const ir = await fetchTimeout(
     'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
       action:'query', titles,
       prop:'imageinfo', iiprop:'url|dimensions',
-      iiurlwidth:'1200', format:'json', origin:'*',
+      iiurlwidth: IMG_THUMB_W,
+      format:'json', origin:'*',
     }), 8000
   );
   if (!ir.ok) return null;
 
   const id2 = await ir.json();
 
-  // 비율 1.2~2.0 (상반신·전신 포트레이트) 최우선 — 극단 클로즈업(>2.5) 하향
+  // ── 포트레이트 점수: 상반신·전신(1.5~2.2)을 최우선 ──────────────
   function portraitScore(info) {
     const r = (info?.height || 0) / (info?.width || 1);
     if (r < 0.75) return 0;
-    if (r < 1.2)  return 0.45;
-    if (r <= 2.0) return 1.0;    // ✅ 이상적: 상반신·전신
-    if (r <= 2.5) return 0.55;
-    return 0.15;
+    if (r < 1.15) return 0.2;
+    if (r < 1.35) return 0.35;    // 홍보 증명사진 비율 — 낮게 평가
+    if (r < 1.55) return 0.65;
+    if (r <= 2.2) return 1.0;     // ✅ 최우선: 상반신~전신
+    if (r <= 2.7) return 0.7;
+    return 0.1;
   }
 
   const pages = Object.values(id2.query.pages)
@@ -405,9 +416,14 @@ async function tryFetchOneIdol(q) {
 
   for (const page of pages) {
     const info = page.imageinfo?.[0];
-    const ratio = (info?.height || 0) / (info?.width || 1);
-    if (info?.thumburl && info.width >= 280 && info.height >= 350 && ratio <= 2.8)
-      return info.thumburl;
+    if (!info?.thumburl) continue;
+    const longSide  = Math.max(info.width, info.height);
+    const shortSide = Math.min(info.width, info.height);
+    const r = info.height / (info.width || 1);
+    if (longSide  < MIN_IMG_LONG) continue;
+    if (shortSide < MIN_IMG_SHRT) continue;
+    if (r > 2.8) continue;
+    return info.thumburl;
   }
   return null;
 }
